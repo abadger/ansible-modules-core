@@ -20,6 +20,10 @@
 # You should have received a copy of the GNU General Public License
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 
+
+import platform
+
+
 DOCUMENTATION = '''
 ---
 module: mount
@@ -270,7 +274,7 @@ def mount(module, **kwargs):
         )
     args.update(kwargs)
 
-    mount_bin = module.get_bin_path('mount')
+    mount_bin = module.get_bin_path('mount', required=True)
 
     name = kwargs['name']
 
@@ -296,7 +300,7 @@ def mount(module, **kwargs):
 def umount(module, **kwargs):
     """ unmount a path """
 
-    umount_bin = module.get_bin_path('umount')
+    umount_bin = module.get_bin_path('umount', required=True)
     name = kwargs['name']
     cmd = [umount_bin, name]
 
@@ -399,20 +403,38 @@ def main():
         name, changed = set_mount(module, **args)
         if state == 'mounted':
             res = 0
+
             if ismount(name):
                 if changed and not module.check_mode:
-                    res,msg = mount(module, **args)
+                    res, msg = mount(module, **args)
             elif 'bind' in args.get('opts', []):
                 changed = True
-                cmd = 'mount -l'
+                bin_path = module.get_bin_path('mount', required=True)
+                cmd = '%s -l' % bin_path
+
+                if platform.system() == 'Linux':
+                    bin_path = module.get_bin_path('findmnt', required=True)
+                    cmd = '%s -nr %s' % (bin_path, args['name'])
+
                 rc, out, err = module.run_command(cmd)
                 allmounts = out.split('\n')
+
                 for mounts in allmounts[:-1]:
                     arguments = mounts.split()
-                    if arguments[0] == args['src'] and arguments[2] == args['name'] and arguments[4] == args['fstype']:
+
+                    if platform.system() == 'Linux':
+                        source = re.compile('\[(.*)\]').search(arguments[1]).group(1)
+
+                        if arguments[0] == args['name'] and source == args['src']:
+                            changed = False
+                    elif arguments[0] == args['src'] and arguments[2] == args['name'] and arguments[4] == args['fstype']:
                         changed = False
-                if changed:
-                    res,msg = mount(module, **args)
+
+                    if not changed:
+                        break
+
+                if changed and not module.check_mode:
+                    res, msg = mount(module, **args)
             else:
                 changed = True
                 if not module.check_mode:
