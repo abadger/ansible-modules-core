@@ -136,6 +136,8 @@ _config:
     sample: {...}
 """
 
+from ansible.module_utils.eos import NetworkModule
+
 
 def http_commands(protocol, port, enable, config):
 
@@ -261,7 +263,7 @@ def main():
         transport=dict(required=True, choices=['cli'])
     )
 
-    module = get_module(argument_spec=argument_spec,
+    module = NetworkModule(argument_spec=argument_spec,
                         supports_check_mode=True)
 
     check_version(module)
@@ -270,10 +272,6 @@ def main():
 
     return module.exit_json(**result)
 
-
-from ansible.module_utils.basic import *
-from ansible.module_utils.shell import *
-from ansible.module_utils.eos import *
 
 if __name__ == '__main__':
     main()

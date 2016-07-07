@@ -147,6 +147,8 @@ responses:
   sample: ['...', '...']
 """
 
+from ansible.module_utils.eos import NetworkConfig, NetworkModule
+
 def get_config(module):
     config = module.params['config'] or dict()
     if not config and not module.params['force']:
@@ -168,7 +170,7 @@ def main():
         config=dict()
     )
 
-    module = get_module(argument_spec=argument_spec,
+    module = NetworkModule(argument_spec=argument_spec,
                         supports_check_mode=True)
 
     lines = module.params['lines']
@@ -210,11 +212,6 @@ def main():
     result['updates'] = commands
     module.exit_json(**result)
 
-from ansible.module_utils.basic import *
-from ansible.module_utils.urls import *
-from ansible.module_utils.shell import *
-from ansible.module_utils.netcfg import *
-from ansible.module_utils.eos import *
 if __name__ == '__main__':
     main()
 

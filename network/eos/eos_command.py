@@ -111,8 +111,11 @@ failed_conditions:
 """
 
 import time
-import shlex
 import re
+
+from ansible.module_utils.pycompat24 import get_exception
+from ansible.module_utils.netcmd import Conditional
+from ansible.module_utils.eos import NetworkModule
 
 INDEX_RE = re.compile(r'(\[\d+\])')
 
@@ -130,7 +133,7 @@ def main():
         interval=dict(default=1, type='int')
     )
 
-    module = get_module(argument_spec=spec,
+    module = NetworkModule(argument_spec=spec,
                         supports_check_mode=True)
 
     commands = module.params['commands']
@@ -173,11 +176,6 @@ def main():
     return module.exit_json(**result)
 
 
-from ansible.module_utils.basic import *
-from ansible.module_utils.urls import *
-from ansible.module_utils.shell import *
-from ansible.module_utils.netcfg import *
-from ansible.module_utils.eos import *
 if __name__ == '__main__':
-        main()
+    main()
 

@@ -119,6 +119,8 @@ responses:
 
 import re
 
+from ansible.module_utils.eos import NetworkConfig, NetworkModule
+
 def get_config(module):
     config = module.params.get('config')
     if not config and not module.params['force']:
@@ -164,7 +166,7 @@ def main():
 
     mutually_exclusive = [('config', 'backup'), ('config', 'force')]
 
-    module = get_module(argument_spec=argument_spec,
+    module = NetworkModule(argument_spec=argument_spec,
                         mutually_exclusive=mutually_exclusive,
                         supports_check_mode=True)
 
@@ -203,10 +205,5 @@ def main():
     result['updates'] = commands
     module.exit_json(**result)
 
-from ansible.module_utils.basic import *
-from ansible.module_utils.urls import *
-from ansible.module_utils.shell import *
-from ansible.module_utils.netcfg import *
-from ansible.module_utils.eos import *
 if __name__ == '__main__':
     main()
