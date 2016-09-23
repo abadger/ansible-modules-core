@@ -21,9 +21,6 @@
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 
 
-import platform
-
-
 DOCUMENTATION = '''
 ---
 module: mount
@@ -101,7 +98,18 @@ EXAMPLES = '''
 - mount: name=/home src='UUID=b3e48f45-f933-4c8e-a700-22a159ec9077' fstype=xfs opts=noatime state=present
 '''
 
+import os
+import platform
+import re
+
+from ansible.module_utils.basic import AnsibleModule, get_platform
+from ansible.module_utils.ismount import ismount
+from ansible.module_utils.pycompat24 import get_exception
 from ansible.module_utils.six import iteritems
+
+
+LINUX_BIND_MOUNT_RE = re.compile('\[(.*)\]')
+
 
 def write_fstab(lines, dest):
 
@@ -112,12 +120,14 @@ def write_fstab(lines, dest):
     fs_w.flush()
     fs_w.close()
 
+
 def _escape_fstab(v):
     """ escape space (040), ampersand (046) and backslash (134) which are invalid in fstab fields """
     if isinstance(v, int):
         return v
     else:
         return v.replace('\\', '\\134').replace(' ', '\\040').replace('&', '\\046')
+
 
 def set_mount(module, **kwargs):
     """ set/change a mount point location in fstab """
@@ -297,6 +307,7 @@ def mount(module, **kwargs):
     else:
         return rc, out+err
 
+
 def umount(module, **kwargs):
     """ unmount a path """
 
@@ -310,16 +321,59 @@ def umount(module, **kwargs):
     else:
         return rc, out+err
 
+
+# Note if we wanted to put this into module_utils we'd have to get permission
+# from @jupeter -- https://github.com/ansible/ansible-modules-core/pull/2923
+# @jtyr -- https://github.com/ansible/ansible-modules-core/issues/4439
+# and @abadger to relicense from GPLv3+
+def is_bind_mounted(module, dest, src=None, fstype=None):
+    """Return whether the dest is bind mounted
+    :arg module: The AnsibleModule (used for helper functions)
+    :arg dest: The directory to be mounted under.  This is the primary means
+        of identifying whether the destination is mounted.
+    :kwarg src: The source directory.  If specified, this is used to help
+        ensure that we are detecting that the correct source is mounted there.
+    :kwarg fstype: The filesystem type.  If specified this is also used to
+        help ensure that we are detecting the right mount.
+    :returns: True if the dest is mounted with src otherwise False.
+    """
+    bin_path = module.get_bin_path('mount', required=True)
+    cmd = '%s -l' % bin_path
+
+    if platform.system() == 'Linux':
+        # If Linux, findmnt works more reliably.  Some distros won't have
+        # findmnt and mount -l will still work, however.  It depends on
+        # whether the distro saves the source directory in the mtab
+        bin_path = module.get_bin_path('findmnt', required=True)
+        cmd = '%s -nr %s' % (bin_path, dest)
+
+    rc, out, err = module.run_command(cmd)
+    allmounts = out.split('\n')
+
+    for mounts in allmounts[:-1]:
+        arguments = mounts.split()
+
+        if platform.system() == 'Linux':
+            source = LINUX_BIND_MOUNT_RE.search(arguments[1]).group(1)
+            if arguments[0] == dest and (source == src or src is None):
+                return True
+
+        elif (arguments[0] == src or src is None) and arguments[2] == dest and (arguments[4] == fstype or fstype is None):
+            return True
+
+    return False
+
+
 def main():
 
     module = AnsibleModule(
         argument_spec = dict(
             state  = dict(required=True, choices=['present', 'absent', 'mounted', 'unmounted']),
-            name   = dict(required=True),
+            name   = dict(required=True, type='path'),
             opts   = dict(default=None),
             passno = dict(default=None, type='str'),
             dump   = dict(default=None),
-            src    = dict(required=False),
+            src    = dict(required=False, type='path'),
             fstype = dict(required=False),
             boot   = dict(default='yes', choices=['yes', 'no']),
             fstab  = dict(default='/etc/fstab')
@@ -333,7 +387,6 @@ def main():
 
 
     changed = False
-    rc = 0
     args = {'name': module.params['name']}
     if module.params['src'] is not None:
         args['src'] = module.params['src']
@@ -351,7 +404,7 @@ def main():
         args['fstab'] = module.params['fstab']
 
     # if fstab file does not exist, we first need to create it. This mainly
-    # happens when fstab optin is passed to the module.
+    # happens when fstab option is passed to the module.
     if not os.path.exists(args['fstab']):
         if not os.path.exists(os.path.dirname(args['fstab'])):
             os.makedirs(os.path.dirname(args['fstab']))
@@ -367,7 +420,7 @@ def main():
     if state == 'absent':
         name, changed = unset_mount(module, **args)
         if changed and not module.check_mode:
-            if ismount(name):
+            if ismount(name) or is_bind_mounted(module, name):
                 res,msg  = umount(module, **args)
                 if res:
                     module.fail_json(msg="Error unmounting %s: %s" % (name, msg))
@@ -382,7 +435,7 @@ def main():
         module.exit_json(changed=changed, **args)
 
     if state == 'unmounted':
-        if ismount(name):
+        if ismount(name) or is_bind_mounted(module, name):
             if not module.check_mode:
                 res,msg  = umount(module, **args)
                 if res:
@@ -409,29 +462,8 @@ def main():
                     res, msg = mount(module, **args)
             elif 'bind' in args.get('opts', []):
                 changed = True
-                bin_path = module.get_bin_path('mount', required=True)
-                cmd = '%s -l' % bin_path
-
-                if platform.system() == 'Linux':
-                    bin_path = module.get_bin_path('findmnt', required=True)
-                    cmd = '%s -nr %s' % (bin_path, args['name'])
-
-                rc, out, err = module.run_command(cmd)
-                allmounts = out.split('\n')
-
-                for mounts in allmounts[:-1]:
-                    arguments = mounts.split()
-
-                    if platform.system() == 'Linux':
-                        source = re.compile('\[(.*)\]').search(arguments[1]).group(1)
-
-                        if arguments[0] == args['name'] and source == args['src']:
-                            changed = False
-                    elif arguments[0] == args['src'] and arguments[2] == args['name'] and arguments[4] == args['fstype']:
-                        changed = False
-
-                    if not changed:
-                        break
+                if is_bind_mounted(module, args['name'], args['src'], args['fstype']):
+                    changed = False
 
                 if changed and not module.check_mode:
                     res, msg = mount(module, **args)
@@ -440,17 +472,12 @@ def main():
                 if not module.check_mode:
                     res,msg = mount(module, **args)
 
-
             if res:
                 module.fail_json(msg="Error mounting %s: %s" % (name, msg))
-
 
         module.exit_json(changed=changed, **args)
 
     module.fail_json(msg='Unexpected position reached')
 
-# import module snippets
-from ansible.module_utils.basic import *
-from ansible.module_utils.ismount import *
-
-main()
+if __name__ == '__main__':
+    main()
